@@ -21,7 +21,7 @@ class NotificationService {
           continue;
         }
 
-        // Build custom message
+        // Build custom message with post URL
         const message = this.buildMessage(
           setting.custom_message,
           instagramAccount.username,
@@ -33,12 +33,12 @@ class NotificationService {
         // Add role mention if configured
         const mentionText = setting.mention_role_id ? `<@&${setting.mention_role_id}> ` : '';
 
-        // Create embed
+        // Create embed with post content
         const embed = this.createEmbed(post, instagramAccount);
 
-        // Send notification
+        // Send notification: text + link, then embed
         await channel.send({
-          content: mentionText + message,
+          content: `${mentionText}${message}\n${post.url}`,
           embeds: [embed]
         });
 
@@ -59,7 +59,7 @@ class NotificationService {
    */
   buildMessage(template, username, displayName, url, title) {
     if (!template) {
-      template = 'New post from {username}: {url}';
+      template = 'Hey **@{username}** just posted a new shot! Go check it out!';
     }
 
     return template
@@ -76,23 +76,25 @@ class NotificationService {
     const embed = new EmbedBuilder()
       .setColor('#E1306C') // Instagram brand color
       .setAuthor({
-        name: `@${instagramAccount.username}`,
+        name: `${instagramAccount.display_name || instagramAccount.username} (${instagramAccount.username})`,
         iconURL: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Instagram_icon.png/64px-Instagram_icon.png',
         url: `https://www.instagram.com/${instagramAccount.username}/`
       })
-      .setTitle('New Instagram Post')
-      .setURL(post.url)
+      .setFooter({
+        text: 'Instagram',
+        iconURL: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Instagram_icon.png/64px-Instagram_icon.png'
+      })
       .setTimestamp(post.publishedAt);
 
-    // Add description if available (truncate to 300 chars)
+    // Add description if available (truncate to 4096 chars - Discord limit)
     if (post.description) {
-      const description = post.description.length > 300
-        ? post.description.substring(0, 297) + '...'
+      const description = post.description.length > 4096
+        ? post.description.substring(0, 4093) + '...'
         : post.description;
       embed.setDescription(description);
     }
 
-    // Add thumbnail if available
+    // Add image if available
     if (post.thumbnail) {
       embed.setImage(post.thumbnail);
     }
