@@ -18,6 +18,14 @@ class NotificationService {
 
         if (!channel) {
           console.error(`[Notification] Channel ${setting.channel_id} not found`);
+          results.push({ success: false, channelId: setting.channel_id, error: 'Channel not found' });
+          continue;
+        }
+
+        // Check if channel is a text-based channel that can send messages
+        if (!channel.isTextBased()) {
+          console.error(`[Notification] Channel ${setting.channel_id} is not a text channel (type: ${channel.type})`);
+          results.push({ success: false, channelId: setting.channel_id, error: 'Not a text channel' });
           continue;
         }
 
@@ -42,11 +50,12 @@ class NotificationService {
           embeds: [embed]
         });
 
-        console.log(`[Notification] Sent notification for @${instagramAccount.username} to channel ${setting.channel_id}`);
+        console.log(`[Notification] ✓ Sent notification for @${instagramAccount.username} to channel ${setting.channel_id}`);
         results.push({ success: true, channelId: setting.channel_id });
 
       } catch (error) {
-        console.error(`[Notification] Failed to send to channel ${setting.channel_id}:`, error.message);
+        console.error(`[Notification] ✗ Failed to send to channel ${setting.channel_id}:`, error.message);
+        console.error(`[Notification] Error stack:`, error.stack);
         results.push({ success: false, channelId: setting.channel_id, error: error.message });
       }
     }
@@ -111,6 +120,11 @@ class NotificationService {
 
       if (!channel) {
         throw new Error('Channel not found');
+      }
+
+      // Check if channel is text-based
+      if (!channel.isTextBased()) {
+        throw new Error(`Channel is not a text channel (type: ${channel.type})`);
       }
 
       const embed = new EmbedBuilder()
