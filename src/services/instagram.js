@@ -9,12 +9,27 @@ class InstagramService {
       }
     });
     this.rssBridgeUrl = process.env.RSS_BRIDGE_URL || 'https://rss-bridge.org/bridge01';
+
+    // Create HTTP client with realistic browser headers
     this.httpClient = axios.create({
-      timeout: 15000,
+      timeout: 20000,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Cache-Control': 'max-age=0'
       }
     });
+
+    // Track last successful method per account for faster checks
+    this.lastSuccessfulMethod = new Map();
   }
 
   /**
@@ -101,7 +116,53 @@ class InstagramService {
   }
 
   /**
-   * Fallback: Try direct Instagram public API endpoint (may be rate limited)
+   * Method 3: Scrape Instagram's HTML page (most reliable for real-time data)
+   */
+  async fetchPostsViaWebScrape(username) {
+    try {
+      console.log(`[Instagram] Attempting web scrape for @${username}`);
+
+      const url = `https://www.instagram.com/${username}/`;
+      const response = await this.httpClient.get(url);
+
+      // Extract JSON data from HTML page
+      const html = response.data;
+
+      // Try to extract from window._sharedData (primary method)
+      const sharedDataMatch = html.match(/window\._sharedData = ({.+?});<\/script>/);
+      if (sharedDataMatch) {
+        const sharedData = JSON.parse(sharedDataMatch[1]);
+        const userData = sharedData?.entry_data?.ProfilePage?.[0]?.graphql?.user;
+
+        if (userData?.edge_owner_to_timeline_media?.edges) {
+          const posts = userData.edge_owner_to_timeline_media.edges.slice(0, 12).map(edge => {
+            const node = edge.node;
+            return {
+              id: node.shortcode,
+              url: `https://www.instagram.com/p/${node.shortcode}/`,
+              title: '',
+              description: node.edge_media_to_caption?.edges[0]?.node?.text || '',
+              publishedAt: new Date(node.taken_at_timestamp * 1000),
+              thumbnail: node.thumbnail_src || node.display_url
+            };
+          });
+
+          console.log(`[Instagram] Successfully scraped ${posts.length} posts from web page`);
+          return posts;
+        }
+      }
+
+      console.log(`[Instagram] Could not extract posts from web page for @${username}`);
+      return [];
+
+    } catch (error) {
+      console.error(`[Instagram] Web scrape error for @${username}:`, error.message);
+      return [];
+    }
+  }
+
+  /**
+   * Method 4: Try direct Instagram public API endpoint (may be rate limited)
    */
   async fetchPostsViaDirect(username) {
     try {
@@ -144,27 +205,51 @@ class InstagramService {
   }
 
   /**
-   * Main method: Try multiple strategies to fetch posts
+   * Main method: Try multiple strategies to fetch posts (ordered by reliability)
    */
   async fetchRecentPosts(username) {
-    // Try RSS Bridge first (most reliable)
-    let posts = await this.fetchPostsViaRSSBridge(username);
+    // Strategy order (best to worst for real-time data):
+    // 1. Direct API (fastest, real-time, but rate limited)
+    // 2. Web scrape (reliable, real-time, harder to block)
+    // 3. RSS Bridge (slow, cached, but stable)
+    // 4. Bibliogram (mostly dead, last resort)
 
-    if (posts.length > 0) {
-      return posts;
+    const strategies = [
+      { name: 'Direct API', fn: () => this.fetchPostsViaDirect(username) },
+      { name: 'Web Scrape', fn: () => this.fetchPostsViaWebScrape(username) },
+      { name: 'RSS Bridge', fn: () => this.fetchPostsViaRSSBridge(username) },
+      { name: 'Bibliogram', fn: () => this.fetchPostsViaBibliogram(username) }
+    ];
+
+    // If we know what worked last time for this account, try that first
+    const lastMethod = this.lastSuccessfulMethod.get(username);
+    if (lastMethod) {
+      const lastStrategy = strategies.find(s => s.name === lastMethod);
+      if (lastStrategy) {
+        console.log(`[Instagram] Trying last successful method (${lastMethod}) for @${username}`);
+        const posts = await lastStrategy.fn();
+        if (posts.length > 0) {
+          return posts;
+        }
+      }
     }
 
-    // Fallback to Bibliogram
-    posts = await this.fetchPostsViaBibliogram(username);
+    // Try all strategies in order
+    for (const strategy of strategies) {
+      const posts = await strategy.fn();
 
-    if (posts.length > 0) {
-      return posts;
+      if (posts.length > 0) {
+        console.log(`[Instagram] ✓ Success with ${strategy.name} for @${username}`);
+        this.lastSuccessfulMethod.set(username, strategy.name);
+        return posts;
+      }
+
+      // Add small delay between attempts to avoid triggering rate limits
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
 
-    // Last resort: direct API (will likely be rate limited)
-    posts = await this.fetchPostsViaDirect(username);
-
-    return posts;
+    console.log(`[Instagram] ✗ All methods failed for @${username}`);
+    return [];
   }
 
   /**

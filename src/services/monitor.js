@@ -8,6 +8,15 @@ class MonitorService {
     this.isRunning = false;
     this.cronJob = null;
     this.checkInterval = parseInt(process.env.CHECK_INTERVAL) || 5;
+
+    // Active hours configuration
+    this.activeHoursStart = process.env.ACTIVE_HOURS_START ? parseInt(process.env.ACTIVE_HOURS_START) : null;
+    this.activeHoursEnd = process.env.ACTIVE_HOURS_END ? parseInt(process.env.ACTIVE_HOURS_END) : null;
+    this.activeHoursTimezone = process.env.ACTIVE_HOURS_TIMEZONE || 'Asia/Tokyo';
+
+    if (this.activeHoursStart !== null && this.activeHoursEnd !== null) {
+      console.log(`[Monitor] Active hours: ${this.activeHoursStart}:00 - ${this.activeHoursEnd}:00 ${this.activeHoursTimezone}`);
+    }
   }
 
   /**
@@ -49,9 +58,51 @@ class MonitorService {
   }
 
   /**
+   * Check if current time is within active hours
+   */
+  isWithinActiveHours() {
+    // If no active hours configured, always return true
+    if (this.activeHoursStart === null || this.activeHoursEnd === null) {
+      return true;
+    }
+
+    try {
+      // Get current time in configured timezone
+      const now = new Date();
+      const currentHour = new Date(now.toLocaleString('en-US', { timeZone: this.activeHoursTimezone })).getHours();
+
+      // Handle overnight time windows (e.g., 21:00 - 05:00)
+      if (this.activeHoursStart > this.activeHoursEnd) {
+        // Active from start hour to midnight, OR midnight to end hour
+        return currentHour >= this.activeHoursStart || currentHour < this.activeHoursEnd;
+      } else {
+        // Normal time window (e.g., 09:00 - 17:00)
+        return currentHour >= this.activeHoursStart && currentHour < this.activeHoursEnd;
+      }
+    } catch (error) {
+      console.error('[Monitor] Error checking active hours:', error.message);
+      return true; // Default to checking if there's an error
+    }
+  }
+
+  /**
    * Check all active Instagram accounts for new posts
    */
   async checkAllAccounts() {
+    // Check if we're within active hours
+    if (!this.isWithinActiveHours()) {
+      const now = new Date();
+      const currentTime = now.toLocaleString('en-US', {
+        timeZone: this.activeHoursTimezone,
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+      console.log(`[Monitor] ⏸️  Outside active hours (current: ${currentTime} ${this.activeHoursTimezone}). Skipping check.`);
+      console.log(`[Monitor] Active hours: ${this.activeHoursStart}:00 - ${this.activeHoursEnd}:00 ${this.activeHoursTimezone}`);
+      return;
+    }
+
     console.log('[Monitor] Checking all accounts for new posts...');
 
     const accounts = this.db.getAllActiveAccounts();
@@ -81,25 +132,33 @@ class MonitorService {
    * Check a single Instagram account for new posts
    */
   async checkAccount(account) {
+    const startTime = Date.now();
+
     try {
-      console.log(`[Monitor] Checking @${account.username}...`);
+      console.log(`[Monitor] Checking @${account.username}... (last post: ${account.last_post_id || 'none'})`);
 
       // Fetch latest post
       const latestPost = await this.instagram.getLatestPost(account.username);
 
       if (!latestPost) {
-        console.log(`[Monitor] No posts found for @${account.username}`);
+        console.log(`[Monitor] ⚠️  No posts found for @${account.username} - account may be private or unreachable`);
         this.db.updateLastChecked(account.id);
         return;
       }
+
+      console.log(`[Monitor] Latest post for @${account.username}: ${latestPost.id} (${latestPost.url})`);
 
       // Check if this is a new post
       const isNewPost = this.isNewPost(account, latestPost);
 
       if (isNewPost) {
-        console.log(`[Monitor] New post detected for @${account.username}: ${latestPost.url}`);
+        console.log(`[Monitor] 🆕 NEW POST detected for @${account.username}!`);
+        console.log(`[Monitor]    Old: ${account.last_post_id}`);
+        console.log(`[Monitor]    New: ${latestPost.id}`);
+        console.log(`[Monitor]    URL: ${latestPost.url}`);
+        console.log(`[Monitor]    Published: ${latestPost.publishedAt.toISOString()}`);
 
-        // Check if we've already notified about this post
+        // Check if we've already notified about this post (double-check safety)
         const alreadyNotified = this.db.hasPostBeenNotified(account.id, latestPost.id);
 
         if (!alreadyNotified) {
@@ -107,29 +166,37 @@ class MonitorService {
           const notificationSettings = this.db.getNotificationSettings(account.id);
 
           if (notificationSettings.length > 0) {
+            console.log(`[Monitor] 📢 Sending notifications to ${notificationSettings.length} channel(s)...`);
+
             // Send notifications
-            await this.notification.sendNotification(latestPost, account, notificationSettings);
+            const results = await this.notification.sendNotification(latestPost, account, notificationSettings);
 
             // Record that we've notified about this post
             this.db.addPostToHistory(account.id, latestPost.id, latestPost.url);
 
-            console.log(`[Monitor] Notifications sent for @${account.username} to ${notificationSettings.length} channel(s)`);
+            const successCount = results.filter(r => r.success).length;
+            console.log(`[Monitor] ✓ Notifications sent: ${successCount}/${notificationSettings.length} successful`);
           } else {
-            console.log(`[Monitor] No notification settings configured for @${account.username}`);
+            console.log(`[Monitor] ⚠️  No notification settings configured for @${account.username}`);
           }
         } else {
-          console.log(`[Monitor] Post ${latestPost.id} already notified, skipping`);
+          console.log(`[Monitor] ⚠️  Post ${latestPost.id} already notified (duplicate detection), skipping`);
         }
 
         // Update last post ID
         this.db.updateLastPostId(account.id, latestPost.id);
       } else {
-        console.log(`[Monitor] No new posts for @${account.username}`);
+        console.log(`[Monitor] ✓ No new posts for @${account.username} (current: ${latestPost.id})`);
         this.db.updateLastChecked(account.id);
       }
 
+      const elapsed = Date.now() - startTime;
+      console.log(`[Monitor] Check completed for @${account.username} in ${elapsed}ms`);
+
     } catch (error) {
-      console.error(`[Monitor] Error checking @${account.username}:`, error.message);
+      const elapsed = Date.now() - startTime;
+      console.error(`[Monitor] ✗ Error checking @${account.username} after ${elapsed}ms:`, error.message);
+      console.error(`[Monitor] Stack trace:`, error.stack);
       this.db.updateLastChecked(account.id);
     }
   }
@@ -182,10 +249,19 @@ class MonitorService {
    */
   getStatus() {
     const accounts = this.db.getAllActiveAccounts();
+    const activeHoursEnabled = this.activeHoursStart !== null && this.activeHoursEnd !== null;
+
     return {
       isRunning: this.isRunning,
       checkInterval: this.checkInterval,
       accountsMonitored: accounts.length,
+      activeHours: {
+        enabled: activeHoursEnabled,
+        start: this.activeHoursStart,
+        end: this.activeHoursEnd,
+        timezone: this.activeHoursTimezone,
+        isActive: this.isWithinActiveHours()
+      },
       accounts: accounts.map(acc => ({
         username: acc.username,
         lastChecked: acc.last_checked

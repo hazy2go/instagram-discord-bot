@@ -37,6 +37,19 @@ export default {
         inline: true
       });
 
+      // Active hours
+      if (status.activeHours) {
+        const activeHoursText = status.activeHours.enabled
+          ? `${status.activeHours.start}:00 - ${status.activeHours.end}:00 ${status.activeHours.timezone}\n${status.activeHours.isActive ? '🟢 Currently Active' : '⏸️ Currently Paused'}`
+          : '24/7 (no restrictions)';
+
+        embed.addFields({
+          name: 'Active Hours',
+          value: activeHoursText,
+          inline: false
+        });
+      }
+
       // Server-specific stats
       const guildSettings = database.getAllNotificationSettingsForGuild(interaction.guildId);
       const uniqueAccounts = [...new Set(guildSettings.map(s => s.username))];

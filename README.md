@@ -9,20 +9,22 @@ A robust Discord.js bot that monitors Instagram accounts and sends real-time not
 - **Customizable Notifications:** Set custom messages with template variables
 - **Multi-Channel Support:** Send notifications to different channels per account
 - **Role Mentions:** Optionally mention roles when new posts are detected
+- **Active Hours:** Only check during specific hours to reduce API calls (e.g., 9 PM - 5 AM JST)
 - **Admin Panel:** Easy-to-use Discord slash commands for management
 - **Reboot Safe:** SQLite database persists all settings and tracking data
-- **Fallback Strategies:** Multiple methods to fetch Instagram data (RSS Bridge, Bibliogram, direct API)
+- **Fallback Strategies:** Multiple methods to fetch Instagram data (Direct API, Web Scraping, RSS Bridge, Bibliogram)
 - **Graceful Error Handling:** Continues monitoring even if individual accounts fail
 
 ## How It Works
 
-The bot uses multiple strategies to fetch Instagram posts:
+The bot uses multiple strategies to fetch Instagram posts (ordered by speed):
 
-1. **RSS Bridge** (Primary): Uses public RSS Bridge instances to convert Instagram profiles to RSS feeds
-2. **Bibliogram** (Fallback): Community-run Instagram frontend with RSS support
-3. **Direct API** (Last Resort): Instagram's public JSON endpoint (rate-limited)
+1. **Direct API** (Primary): Instagram's public JSON endpoint - real-time, fastest
+2. **Web Scraping** (Fallback): Scrapes Instagram HTML pages - real-time, reliable
+3. **RSS Bridge** (Backup): Public RSS Bridge instances - may be cached/slow
+4. **Bibliogram** (Last Resort): Community-run frontend - mostly deprecated
 
-This multi-layered approach ensures maximum reliability and uptime.
+This multi-layered approach ensures maximum reliability and real-time detection. See [FETCH_STRATEGY.md](FETCH_STRATEGY.md) for detailed explanation.
 
 ## Prerequisites
 
@@ -205,6 +207,25 @@ CHECK_INTERVAL=5  # Check every 5 minutes
 **Recommended:** 5-10 minutes to avoid rate limiting
 
 **Minimum:** 5 minutes (lower values may result in rate limiting)
+
+### Active Hours (Optional)
+
+Reduce API calls by only checking during specific hours when posts are most likely:
+
+```env
+ACTIVE_HOURS_START=21  # Start at 9 PM (21:00)
+ACTIVE_HOURS_END=5     # Stop at 5 AM (05:00)
+ACTIVE_HOURS_TIMEZONE=Asia/Tokyo  # JST timezone
+```
+
+**Benefits:**
+- Reduces API calls by 50-70%
+- Avoids rate limits
+- Focuses checks on peak posting times
+
+**Example:** If your Instagram accounts post between 9 PM and 5 AM JST, set those as active hours. The bot will skip checks outside this window.
+
+Leave empty or comment out to check 24/7. See [ACTIVE_HOURS.md](ACTIVE_HOURS.md) for detailed configuration guide.
 
 ### RSS Bridge Instance
 
