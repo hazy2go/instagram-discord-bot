@@ -49,19 +49,22 @@ class InstagramService {
         return [];
       }
 
-      const posts = feed.items.map(item => {
-        // Extract post ID from link or guid
-        const postId = this.extractPostId(item.link || item.guid);
+      const posts = feed.items
+        .map(item => {
+          // Extract post ID from link or guid
+          const postId = this.extractPostId(item.link || item.guid);
 
-        return {
-          id: postId,
-          url: item.link,
-          title: item.title || '',
-          description: item.contentSnippet || item.description || '',
-          publishedAt: new Date(item.pubDate || item.isoDate),
-          thumbnail: item['media:content']?.$?.url || null
-        };
-      });
+          return {
+            id: postId,
+            url: item.link,
+            title: item.title || '',
+            description: item.contentSnippet || item.description || '',
+            publishedAt: new Date(item.pubDate || item.isoDate),
+            thumbnail: item['media:content']?.$?.url || null
+          };
+        })
+        // Sort by timestamp (newest first) - RSS feeds might not be perfectly ordered
+        .sort((a, b) => b.publishedAt - a.publishedAt);
 
       console.log(`[Instagram] Found ${posts.length} posts for @${username}`);
       return posts;
@@ -91,17 +94,20 @@ class InstagramService {
         const feed = await this.parser.parseString(response.data);
 
         if (feed.items && feed.items.length > 0) {
-          const posts = feed.items.map(item => {
-            const postId = this.extractPostId(item.link || item.guid);
-            return {
-              id: postId,
-              url: item.link.replace(instance, 'https://www.instagram.com'),
-              title: item.title || '',
-              description: item.contentSnippet || '',
-              publishedAt: new Date(item.pubDate || item.isoDate),
-              thumbnail: null
-            };
-          });
+          const posts = feed.items
+            .map(item => {
+              const postId = this.extractPostId(item.link || item.guid);
+              return {
+                id: postId,
+                url: item.link.replace(instance, 'https://www.instagram.com'),
+                title: item.title || '',
+                description: item.contentSnippet || '',
+                publishedAt: new Date(item.pubDate || item.isoDate),
+                thumbnail: null
+              };
+            })
+            // Sort by timestamp (newest first)
+            .sort((a, b) => b.publishedAt - a.publishedAt);
 
           console.log(`[Instagram] Successfully fetched ${posts.length} posts via Bibliogram`);
           return posts;
@@ -135,19 +141,31 @@ class InstagramService {
         const userData = sharedData?.entry_data?.ProfilePage?.[0]?.graphql?.user;
 
         if (userData?.edge_owner_to_timeline_media?.edges) {
-          const posts = userData.edge_owner_to_timeline_media.edges.slice(0, 12).map(edge => {
-            const node = edge.node;
-            return {
-              id: node.shortcode,
-              url: `https://www.instagram.com/p/${node.shortcode}/`,
-              title: '',
-              description: node.edge_media_to_caption?.edges[0]?.node?.text || '',
-              publishedAt: new Date(node.taken_at_timestamp * 1000),
-              thumbnail: node.thumbnail_src || node.display_url
-            };
-          });
+          const posts = userData.edge_owner_to_timeline_media.edges
+            .slice(0, 12)
+            .map(edge => {
+              const node = edge.node;
+              return {
+                id: node.shortcode,
+                url: `https://www.instagram.com/p/${node.shortcode}/`,
+                title: '',
+                description: node.edge_media_to_caption?.edges[0]?.node?.text || '',
+                publishedAt: new Date(node.taken_at_timestamp * 1000),
+                thumbnail: node.thumbnail_src || node.display_url,
+                isPinned: node.pinned_for_users && node.pinned_for_users.length > 0
+              };
+            })
+            // Sort by timestamp (newest first) to handle pinned posts
+            .sort((a, b) => b.publishedAt - a.publishedAt);
 
           console.log(`[Instagram] Successfully scraped ${posts.length} posts from web page`);
+
+          // Log if pinned posts detected
+          const pinnedCount = posts.filter(p => p.isPinned).length;
+          if (pinnedCount > 0) {
+            console.log(`[Instagram] Found ${pinnedCount} pinned post(s) for @${username}, sorted by timestamp`);
+          }
+
           return posts;
         }
       }
@@ -183,19 +201,31 @@ class InstagramService {
         return [];
       }
 
-      const posts = userData.edge_owner_to_timeline_media.edges.slice(0, 12).map(edge => {
-        const node = edge.node;
-        return {
-          id: node.shortcode,
-          url: `https://www.instagram.com/p/${node.shortcode}/`,
-          title: '',
-          description: node.edge_media_to_caption?.edges[0]?.node?.text || '',
-          publishedAt: new Date(node.taken_at_timestamp * 1000),
-          thumbnail: node.thumbnail_src || node.display_url
-        };
-      });
+      const posts = userData.edge_owner_to_timeline_media.edges
+        .slice(0, 12)
+        .map(edge => {
+          const node = edge.node;
+          return {
+            id: node.shortcode,
+            url: `https://www.instagram.com/p/${node.shortcode}/`,
+            title: '',
+            description: node.edge_media_to_caption?.edges[0]?.node?.text || '',
+            publishedAt: new Date(node.taken_at_timestamp * 1000),
+            thumbnail: node.thumbnail_src || node.display_url,
+            isPinned: node.pinned_for_users && node.pinned_for_users.length > 0 // Check if pinned
+          };
+        })
+        // Sort by timestamp (newest first) to handle pinned posts
+        .sort((a, b) => b.publishedAt - a.publishedAt);
 
       console.log(`[Instagram] Successfully fetched ${posts.length} posts via direct API`);
+
+      // Log if pinned posts detected
+      const pinnedCount = posts.filter(p => p.isPinned).length;
+      if (pinnedCount > 0) {
+        console.log(`[Instagram] Found ${pinnedCount} pinned post(s) for @${username}, sorted by timestamp`);
+      }
+
       return posts;
 
     } catch (error) {
