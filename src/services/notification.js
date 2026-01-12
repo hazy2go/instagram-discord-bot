@@ -7,6 +7,37 @@ class NotificationService {
   }
 
   /**
+   * Check if a post has already been shared in the channel
+   */
+  async isPostAlreadyShared(channel, postUrl) {
+    try {
+      // Extract post ID from URL (e.g., https://www.instagram.com/p/ABC123/)
+      const postIdMatch = postUrl.match(/\/p\/([^\/]+)/);
+      if (!postIdMatch) {
+        console.warn(`[Notification] Could not extract post ID from URL: ${postUrl}`);
+        return false;
+      }
+      const postId = postIdMatch[1];
+
+      // Fetch last 4 messages from the channel
+      const messages = await channel.messages.fetch({ limit: 4 });
+
+      // Check if any message contains the post URL or post ID
+      for (const message of messages.values()) {
+        if (message.content.includes(postUrl) || message.content.includes(postId)) {
+          return true;
+        }
+      }
+
+      return false;
+    } catch (error) {
+      console.error(`[Notification] Error checking for duplicate post:`, error.message);
+      // On error, assume it's not a duplicate to avoid blocking legitimate posts
+      return false;
+    }
+  }
+
+  /**
    * Send notification about a new Instagram post
    */
   async sendNotification(post, instagramAccount, notificationSettings) {
@@ -26,6 +57,14 @@ class NotificationService {
         if (!channel.isTextBased()) {
           console.error(`[Notification] Channel ${setting.channel_id} is not a text channel (type: ${channel.type})`);
           results.push({ success: false, channelId: setting.channel_id, error: 'Not a text channel' });
+          continue;
+        }
+
+        // Check if post was already shared in this channel
+        const alreadyShared = await this.isPostAlreadyShared(channel, post.url);
+        if (alreadyShared) {
+          console.log(`[Notification] ⊘ Skipping duplicate post for @${instagramAccount.username} in channel ${setting.channel_id} (already shared)`);
+          results.push({ success: true, channelId: setting.channel_id, skipped: true, reason: 'duplicate' });
           continue;
         }
 
