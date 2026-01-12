@@ -8,8 +8,12 @@ class NotificationService {
 
   /**
    * Check if a post has already been shared in the channel
+   * Uses three-layer protection:
+   * 1. Database history check (permanent record)
+   * 2. Discord message check (last 4 messages)
+   * 3. Timestamp validation (handled in monitor.js)
    */
-  async isPostAlreadyShared(channel, postUrl) {
+  async isPostAlreadyShared(channel, postUrl, instagramAccountId) {
     try {
       // Extract post ID from URL (e.g., https://www.instagram.com/p/ABC123/)
       const postIdMatch = postUrl.match(/\/p\/([^\/]+)/);
@@ -19,12 +23,20 @@ class NotificationService {
       }
       const postId = postIdMatch[1];
 
-      // Fetch last 4 messages from the channel
+      // Layer 1: Check database history (permanent record across reboots)
+      const inDatabase = this.db.hasPostBeenNotified(instagramAccountId, postId);
+      if (inDatabase) {
+        console.log(`[Notification] Post ${postId} found in database history - already notified`);
+        return true;
+      }
+
+      // Layer 2: Check recent Discord messages (catches manual posts)
       const messages = await channel.messages.fetch({ limit: 4 });
 
       // Check if any message contains the post URL or post ID
       for (const message of messages.values()) {
         if (message.content.includes(postUrl) || message.content.includes(postId)) {
+          console.log(`[Notification] Post ${postId} found in recent Discord messages`);
           return true;
         }
       }
@@ -61,7 +73,7 @@ class NotificationService {
         }
 
         // Check if post was already shared in this channel
-        const alreadyShared = await this.isPostAlreadyShared(channel, post.url);
+        const alreadyShared = await this.isPostAlreadyShared(channel, post.url, instagramAccount.id);
         if (alreadyShared) {
           console.log(`[Notification] ⊘ Skipping duplicate post for @${instagramAccount.username} in channel ${setting.channel_id} (already shared)`);
           results.push({ success: true, channelId: setting.channel_id, skipped: true, reason: 'duplicate' });

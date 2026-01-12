@@ -211,7 +211,26 @@ class MonitorService {
     }
 
     // Check if the post ID is different
-    return post.id !== account.last_post_id;
+    if (post.id === account.last_post_id) {
+      return false; // Same post, not new
+    }
+
+    // Additional safety: Check if post was published after last check
+    // This prevents reposting old content when Instagram API has issues
+    if (account.last_checked && post.publishedAt) {
+      const lastChecked = new Date(account.last_checked);
+      const postPublished = new Date(post.publishedAt);
+
+      // If post is older than our last check, it's not actually "new"
+      // Add 1 minute buffer to account for clock skew
+      if (postPublished < new Date(lastChecked.getTime() - 60000)) {
+        console.log(`[Monitor] ⚠️  Post ${post.id} is older than last check (published: ${postPublished.toISOString()}, last check: ${lastChecked.toISOString()})`);
+        console.log(`[Monitor] ⚠️  Likely an Instagram API issue - skipping to prevent reposting old content`);
+        return false;
+      }
+    }
+
+    return true; // Different post ID and timestamp looks valid
   }
 
   /**
