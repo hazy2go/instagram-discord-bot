@@ -223,26 +223,11 @@ class MonitorService {
       return false; // Same post, not new
     }
 
-    // Additional safety: Check if post was published after last check
-    // This prevents reposting old content when Instagram API has issues
-    if (account.last_checked && post.publishedAt) {
-      const lastChecked = new Date(account.last_checked);
-      const postPublished = new Date(post.publishedAt);
-      const bufferTime = new Date(lastChecked.getTime() - 60000);
-
-      console.log(`[Monitor]    → Timestamp check: post (${postPublished.toISOString()}) vs buffer (${bufferTime.toISOString()})`);
-
-      // If post is older than our last check, it's not actually "new"
-      // Add 1 minute buffer to account for clock skew
-      if (postPublished < bufferTime) {
-        console.log(`[Monitor] ⚠️  Post ${post.id} is older than last check - likely API delay`);
-        console.log(`[Monitor] ⚠️  Skipping to prevent reposting old content`);
-        return false;
-      }
-    }
-
-    console.log(`[Monitor]    → ✓ Post is NEW!`);
-    return true; // Different post ID and timestamp looks valid
+    // Post ID is different, so it might be new
+    // Rely on database history and Discord message checks for duplicate prevention
+    // Don't use timestamp validation here as RSS feeds can be delayed/cached
+    console.log(`[Monitor]    → ✓ Different post ID - treating as potentially new`);
+    return true;
   }
 
   /**
