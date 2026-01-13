@@ -247,39 +247,42 @@ class InstagramService {
     const strategies = [
       { name: 'Direct API', fn: () => this.fetchPostsViaDirect(username) },
       { name: 'Web Scrape', fn: () => this.fetchPostsViaWebScrape(username) },
-      { name: 'RSS Bridge', fn: () => this.fetchPostsViaRSSBridge(username) },
-      { name: 'Bibliogram', fn: () => this.fetchPostsViaBibliogram(username) }
+      { name: 'RSS Bridge', fn: () => this.fetchPostsViaRSSBridge(username) }
     ];
 
-    // If we know what worked last time for this account, try that first
-    const lastMethod = this.lastSuccessfulMethod.get(username);
-    if (lastMethod) {
-      const lastStrategy = strategies.find(s => s.name === lastMethod);
-      if (lastStrategy) {
-        console.log(`[Instagram] Trying last successful method (${lastMethod}) for @${username}`);
-        const posts = await lastStrategy.fn();
-        if (posts.length > 0) {
-          return posts;
-        }
-      }
-    }
+    // Try multiple methods and combine results for better reliability
+    const allPosts = [];
+    const successfulMethods = [];
 
-    // Try all strategies in order
     for (const strategy of strategies) {
-      const posts = await strategy.fn();
-
-      if (posts.length > 0) {
-        console.log(`[Instagram] ✓ Success with ${strategy.name} for @${username}`);
-        this.lastSuccessfulMethod.set(username, strategy.name);
-        return posts;
+      try {
+        const posts = await strategy.fn();
+        if (posts.length > 0) {
+          console.log(`[Instagram] ✓ ${strategy.name} returned ${posts.length} posts for @${username}`);
+          allPosts.push(...posts);
+          successfulMethods.push(strategy.name);
+        }
+        // Add small delay between attempts
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (error) {
+        console.error(`[Instagram] ✗ ${strategy.name} failed:`, error.message);
       }
-
-      // Add small delay between attempts to avoid triggering rate limits
-      await new Promise(resolve => setTimeout(resolve, 500));
     }
 
-    console.log(`[Instagram] ✗ All methods failed for @${username}`);
-    return [];
+    if (allPosts.length === 0) {
+      console.log(`[Instagram] ✗ All methods failed for @${username}`);
+      return [];
+    }
+
+    // Deduplicate posts by ID and sort by timestamp
+    const uniquePosts = Array.from(
+      new Map(allPosts.map(post => [post.id, post])).values()
+    ).sort((a, b) => b.publishedAt - a.publishedAt);
+
+    console.log(`[Instagram] ✓ Combined results: ${uniquePosts.length} unique posts from ${successfulMethods.join(', ')}`);
+    console.log(`[Instagram] Latest post after combining: ${uniquePosts[0].id} (${uniquePosts[0].publishedAt.toISOString()})`);
+
+    return uniquePosts;
   }
 
   /**
