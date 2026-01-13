@@ -8,6 +8,7 @@ class MonitorService {
     this.isRunning = false;
     this.cronJob = null;
     this.checkInterval = parseInt(process.env.CHECK_INTERVAL) || 5;
+    this.debugMode = process.env.DEBUG_MODE === 'true';
 
     // Active hours configuration
     this.activeHoursStart = process.env.ACTIVE_HOURS_START ? parseInt(process.env.ACTIVE_HOURS_START) : null;
@@ -16,6 +17,10 @@ class MonitorService {
 
     if (this.activeHoursStart !== null && this.activeHoursEnd !== null) {
       console.log(`[Monitor] Active hours: ${this.activeHoursStart}:00 - ${this.activeHoursEnd}:00 ${this.activeHoursTimezone}`);
+    }
+
+    if (this.debugMode) {
+      console.log('[Monitor] Debug mode enabled - verbose logging active');
     }
   }
 
@@ -146,8 +151,11 @@ class MonitorService {
         return;
       }
 
-      console.log(`[Monitor] Latest post for @${account.username}: ${latestPost.id} (${latestPost.url})`);
-      console.log(`[Monitor]    Published at: ${latestPost.publishedAt ? latestPost.publishedAt.toISOString() : 'UNKNOWN'}`);
+      console.log(`[Monitor] Latest post for @${account.username}: ${latestPost.id}`);
+      if (this.debugMode) {
+        console.log(`[Monitor]    URL: ${latestPost.url}`);
+        console.log(`[Monitor]    Published at: ${latestPost.publishedAt ? latestPost.publishedAt.toISOString() : 'UNKNOWN'}`);
+      }
 
       // Check if this is a new post
       const isNewPost = this.isNewPost(account, latestPost);
@@ -206,27 +214,29 @@ class MonitorService {
    * Determine if a post is new
    */
   isNewPost(account, post) {
-    console.log(`[Monitor] Checking if post ${post.id} is new for @${account.username}`);
-    console.log(`[Monitor]    Current last_post_id: ${account.last_post_id}`);
-    console.log(`[Monitor]    Post published at: ${post.publishedAt ? post.publishedAt.toISOString() : 'UNKNOWN'}`);
-    console.log(`[Monitor]    Last checked: ${account.last_checked || 'NEVER'}`);
+    if (this.debugMode) {
+      console.log(`[Monitor] Checking if post ${post.id} is new for @${account.username}`);
+      console.log(`[Monitor]    Current last_post_id: ${account.last_post_id}`);
+      console.log(`[Monitor]    Post published at: ${post.publishedAt ? post.publishedAt.toISOString() : 'UNKNOWN'}`);
+      console.log(`[Monitor]    Last checked: ${account.last_checked || 'NEVER'}`);
+    }
 
     // If we don't have a last_post_id, this is the first check
     if (!account.last_post_id) {
-      console.log(`[Monitor]    → First check for account, skipping to avoid spam`);
+      if (this.debugMode) console.log(`[Monitor]    → First check for account, skipping to avoid spam`);
       return false; // Don't notify on first check (avoid spam from old posts)
     }
 
     // Check if the post ID is different
     if (post.id === account.last_post_id) {
-      console.log(`[Monitor]    → Same post ID as last check, not new`);
+      if (this.debugMode) console.log(`[Monitor]    → Same post ID as last check, not new`);
       return false; // Same post, not new
     }
 
     // Post ID is different, so it might be new
     // Rely on database history and Discord message checks for duplicate prevention
     // Don't use timestamp validation here as RSS feeds can be delayed/cached
-    console.log(`[Monitor]    → ✓ Different post ID - treating as potentially new`);
+    if (this.debugMode) console.log(`[Monitor]    → ✓ Different post ID - treating as potentially new`);
     return true;
   }
 
