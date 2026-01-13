@@ -15,13 +15,13 @@ class NotificationService {
    */
   async isPostAlreadyShared(channel, postUrl, instagramAccountId) {
     try {
-      // Extract post ID from URL (e.g., https://www.instagram.com/p/ABC123/)
-      const postIdMatch = postUrl.match(/\/p\/([^\/]+)/);
+      // Extract post ID from URL (e.g., https://www.instagram.com/p/ABC123/ or /reel/ABC123/)
+      const postIdMatch = postUrl.match(/\/(p|reel)\/([^\/\?]+)/);
       if (!postIdMatch) {
         console.warn(`[Notification] Could not extract post ID from URL: ${postUrl}`);
         return false;
       }
-      const postId = postIdMatch[1];
+      const postId = postIdMatch[2];
 
       // Layer 1: Check database history (permanent record across reboots)
       const inDatabase = this.db.hasPostBeenNotified(instagramAccountId, postId);

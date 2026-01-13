@@ -291,9 +291,9 @@ class InstagramService {
   extractPostId(urlOrGuid) {
     if (!urlOrGuid) return null;
 
-    // Extract from URL like: https://www.instagram.com/p/ABC123xyz/
-    const match = urlOrGuid.match(/\/p\/([A-Za-z0-9_-]+)/);
-    return match ? match[1] : urlOrGuid;
+    // Extract from URL like: https://www.instagram.com/p/ABC123xyz/ or /reel/ABC123xyz/
+    const match = urlOrGuid.match(/\/(p|reel)\/([A-Za-z0-9_-]+)/);
+    return match ? match[2] : urlOrGuid;
   }
 
   /**
