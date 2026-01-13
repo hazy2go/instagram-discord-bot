@@ -246,7 +246,6 @@ class InstagramService {
 
     const strategies = [
       { name: 'Direct API', fn: () => this.fetchPostsViaDirect(username) },
-      { name: 'Web Scrape', fn: () => this.fetchPostsViaWebScrape(username) },
       { name: 'RSS Bridge', fn: () => this.fetchPostsViaRSSBridge(username) }
     ];
 
