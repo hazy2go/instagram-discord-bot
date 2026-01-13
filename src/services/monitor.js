@@ -147,6 +147,7 @@ class MonitorService {
       }
 
       console.log(`[Monitor] Latest post for @${account.username}: ${latestPost.id} (${latestPost.url})`);
+      console.log(`[Monitor]    Published at: ${latestPost.publishedAt ? latestPost.publishedAt.toISOString() : 'UNKNOWN'}`);
 
       // Check if this is a new post
       const isNewPost = this.isNewPost(account, latestPost);
@@ -205,13 +206,20 @@ class MonitorService {
    * Determine if a post is new
    */
   isNewPost(account, post) {
+    console.log(`[Monitor] Checking if post ${post.id} is new for @${account.username}`);
+    console.log(`[Monitor]    Current last_post_id: ${account.last_post_id}`);
+    console.log(`[Monitor]    Post published at: ${post.publishedAt ? post.publishedAt.toISOString() : 'UNKNOWN'}`);
+    console.log(`[Monitor]    Last checked: ${account.last_checked || 'NEVER'}`);
+
     // If we don't have a last_post_id, this is the first check
     if (!account.last_post_id) {
+      console.log(`[Monitor]    → First check for account, skipping to avoid spam`);
       return false; // Don't notify on first check (avoid spam from old posts)
     }
 
     // Check if the post ID is different
     if (post.id === account.last_post_id) {
+      console.log(`[Monitor]    → Same post ID as last check, not new`);
       return false; // Same post, not new
     }
 
@@ -220,16 +228,20 @@ class MonitorService {
     if (account.last_checked && post.publishedAt) {
       const lastChecked = new Date(account.last_checked);
       const postPublished = new Date(post.publishedAt);
+      const bufferTime = new Date(lastChecked.getTime() - 60000);
+
+      console.log(`[Monitor]    → Timestamp check: post (${postPublished.toISOString()}) vs buffer (${bufferTime.toISOString()})`);
 
       // If post is older than our last check, it's not actually "new"
       // Add 1 minute buffer to account for clock skew
-      if (postPublished < new Date(lastChecked.getTime() - 60000)) {
-        console.log(`[Monitor] ⚠️  Post ${post.id} is older than last check (published: ${postPublished.toISOString()}, last check: ${lastChecked.toISOString()})`);
-        console.log(`[Monitor] ⚠️  Likely an Instagram API issue - skipping to prevent reposting old content`);
+      if (postPublished < bufferTime) {
+        console.log(`[Monitor] ⚠️  Post ${post.id} is older than last check - likely API delay`);
+        console.log(`[Monitor] ⚠️  Skipping to prevent reposting old content`);
         return false;
       }
     }
 
+    console.log(`[Monitor]    → ✓ Post is NEW!`);
     return true; // Different post ID and timestamp looks valid
   }
 
