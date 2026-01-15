@@ -1,0 +1,202 @@
+import { EmbedBuilder } from 'discord.js';
+
+class NotificationService {
+  constructor(client, database) {
+    this.client = client;
+    this.db = database;
+  }
+
+  /**
+   * Check if a post has already been shared in the channel
+   * Uses three-layer protection:
+   * 1. Database history check (permanent record)
+   * 2. Discord message check (last 4 messages)
+   * 3. Timestamp validation (handled in monitor.js)
+   */
+  async isPostAlreadyShared(channel, postUrl, instagramAccountId) {
+    try {
+      // Extract post ID from URL (e.g., https://www.instagram.com/p/ABC123/ or /reel/ABC123/)
+      const postIdMatch = postUrl.match(/\/(p|reel)\/([^\/\?]+)/);
+      if (!postIdMatch) {
+        console.warn(`[Notification] Could not extract post ID from URL: ${postUrl}`);
+        return false;
+      }
+      const postId = postIdMatch[2];
+
+      // Layer 1: Check database history (permanent record across reboots)
+      const inDatabase = this.db.hasPostBeenNotified(instagramAccountId, postId);
+      if (inDatabase) {
+        console.log(`[Notification] Post ${postId} found in database history - already notified`);
+        return true;
+      }
+
+      // Layer 2: Check recent Discord messages (catches manual posts)
+      const messages = await channel.messages.fetch({ limit: 4 });
+
+      // Check if any message contains the post URL or post ID
+      for (const message of messages.values()) {
+        if (message.content.includes(postUrl) || message.content.includes(postId)) {
+          console.log(`[Notification] Post ${postId} found in recent Discord messages`);
+          return true;
+        }
+      }
+
+      return false;
+    } catch (error) {
+      console.error(`[Notification] Error checking for duplicate post:`, error.message);
+      // On error, assume it's not a duplicate to avoid blocking legitimate posts
+      return false;
+    }
+  }
+
+  /**
+   * Send notification about a new Instagram post
+   */
+  async sendNotification(post, instagramAccount, notificationSettings) {
+    const results = [];
+
+    for (const setting of notificationSettings) {
+      try {
+        const channel = await this.client.channels.fetch(setting.channel_id);
+
+        if (!channel) {
+          console.error(`[Notification] Channel ${setting.channel_id} not found`);
+          results.push({ success: false, channelId: setting.channel_id, error: 'Channel not found' });
+          continue;
+        }
+
+        // Check if channel is a text-based channel that can send messages
+        if (!channel.isTextBased()) {
+          console.error(`[Notification] Channel ${setting.channel_id} is not a text channel (type: ${channel.type})`);
+          results.push({ success: false, channelId: setting.channel_id, error: 'Not a text channel' });
+          continue;
+        }
+
+        // Check if post was already shared in this channel
+        const alreadyShared = await this.isPostAlreadyShared(channel, post.url, instagramAccount.id);
+        if (alreadyShared) {
+          console.log(`[Notification] ⊘ Skipping duplicate post for @${instagramAccount.username} in channel ${setting.channel_id} (already shared)`);
+          results.push({ success: true, channelId: setting.channel_id, skipped: true, reason: 'duplicate' });
+          continue;
+        }
+
+        // Build custom message with post URL
+        const message = this.buildMessage(
+          setting.custom_message,
+          instagramAccount.username,
+          instagramAccount.display_name,
+          post.url,
+          post.title
+        );
+
+        // Add role mention if configured
+        const mentionText = setting.mention_role_id ? `<@&${setting.mention_role_id}> ` : '';
+
+        // Create embed with post content
+        const embed = this.createEmbed(post, instagramAccount);
+
+        // Send notification: text + link, then embed
+        await channel.send({
+          content: `${mentionText}${message}\n${post.url}`,
+          embeds: [embed]
+        });
+
+        console.log(`[Notification] ✓ Sent notification for @${instagramAccount.username} to channel ${setting.channel_id}`);
+        results.push({ success: true, channelId: setting.channel_id });
+
+      } catch (error) {
+        console.error(`[Notification] ✗ Failed to send to channel ${setting.channel_id}:`, error.message);
+        console.error(`[Notification] Error stack:`, error.stack);
+        results.push({ success: false, channelId: setting.channel_id, error: error.message });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Build notification message with template variables
+   */
+  buildMessage(template, username, displayName, url, title) {
+    if (!template) {
+      template = 'Hey **@{username}** just posted a new shot! Go check it out!';
+    }
+
+    return template
+      .replace(/{username}/g, username)
+      .replace(/{display_name}/g, displayName || username)
+      .replace(/{url}/g, url)
+      .replace(/{title}/g, title || '');
+  }
+
+  /**
+   * Create Discord embed for Instagram post
+   */
+  createEmbed(post, instagramAccount) {
+    const embed = new EmbedBuilder()
+      .setColor('#E1306C') // Instagram brand color
+      .setAuthor({
+        name: `${instagramAccount.display_name || instagramAccount.username} (${instagramAccount.username})`,
+        iconURL: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Instagram_icon.png/64px-Instagram_icon.png',
+        url: `https://www.instagram.com/${instagramAccount.username}/`
+      })
+      .setFooter({
+        text: 'Instagram',
+        iconURL: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Instagram_icon.png/64px-Instagram_icon.png'
+      })
+      .setTimestamp(post.publishedAt);
+
+    // Add description if available (truncate to 4096 chars - Discord limit)
+    if (post.description) {
+      const description = post.description.length > 4096
+        ? post.description.substring(0, 4093) + '...'
+        : post.description;
+      embed.setDescription(description);
+    }
+
+    // Add image if available
+    if (post.thumbnail) {
+      embed.setImage(post.thumbnail);
+    }
+
+    return embed;
+  }
+
+  /**
+   * Send a test notification
+   */
+  async sendTestNotification(channelId, username) {
+    try {
+      const channel = await this.client.channels.fetch(channelId);
+
+      if (!channel) {
+        throw new Error('Channel not found');
+      }
+
+      // Check if channel is text-based
+      if (!channel.isTextBased()) {
+        throw new Error(`Channel is not a text channel (type: ${channel.type})`);
+      }
+
+      const embed = new EmbedBuilder()
+        .setColor('#E1306C')
+        .setAuthor({
+          name: `@${username}`,
+          iconURL: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Instagram_icon.png/64px-Instagram_icon.png',
+          url: `https://www.instagram.com/${username}/`
+        })
+        .setTitle('Test Notification')
+        .setDescription('This is a test notification for Instagram post monitoring.')
+        .setTimestamp();
+
+      await channel.send({ content: `Test notification for @${username}`, embeds: [embed] });
+
+      return { success: true };
+    } catch (error) {
+      console.error('[Notification] Test notification failed:', error.message);
+      return { success: false, error: error.message };
+    }
+  }
+}
+
+export default NotificationService;

@@ -1,0 +1,23 @@
+{
+  "name": "instagram-discord-bot",
+  "version": "1.0.0",
+  "description": "Discord bot for Instagram post notifications with admin panel",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "deploy-commands": "node src/deploy-commands.js"
+  },
+  "keywords": ["discord", "instagram", "bot", "notifications"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "better-sqlite3": "^11.0.0",
+    "axios": "^1.6.7",
+    "rss-parser": "^3.13.0",
+    "dotenv": "^16.4.5",
+    "node-cron": "^3.0.3"
+  }
+}
