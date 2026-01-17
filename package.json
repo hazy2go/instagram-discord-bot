@@ -1,23 +1,31 @@
 {
   "name": "instagram-discord-bot",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Discord bot for Instagram post notifications with admin panel",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "deploy-commands": "node src/deploy-commands.js"
+    "deploy-commands": "node src/deploy-commands.js",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage"
   },
   "keywords": ["discord", "instagram", "bot", "notifications"],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "discord.js": "^14.14.1",
-    "better-sqlite3": "^11.0.0",
-    "axios": "^1.6.7",
+    "discord.js": "^14.16.3",
+    "better-sqlite3": "^11.7.0",
+    "axios": "^1.7.9",
     "rss-parser": "^3.13.0",
-    "dotenv": "^16.4.5",
-    "node-cron": "^3.0.3"
+    "dotenv": "^16.4.7",
+    "node-cron": "^3.0.3",
+    "winston": "^3.17.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "@jest/globals": "^29.7.0"
   }
 }
