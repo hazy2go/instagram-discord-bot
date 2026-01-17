@@ -191,38 +191,75 @@ class InstagramService {
 
         const html = response.data;
 
-        // Try to extract from window._sharedData (primary method)
+        // Method 1: Try to extract from window._sharedData (legacy method)
         const sharedDataMatch = html.match(/window\._sharedData = ({.+?});<\/script>/);
         if (sharedDataMatch) {
-          const sharedData = JSON.parse(sharedDataMatch[1]);
-          const userData = sharedData?.entry_data?.ProfilePage?.[0]?.graphql?.user;
+          try {
+            const sharedData = JSON.parse(sharedDataMatch[1]);
+            const userData = sharedData?.entry_data?.ProfilePage?.[0]?.graphql?.user;
 
-          if (userData?.edge_owner_to_timeline_media?.edges) {
-            const posts = userData.edge_owner_to_timeline_media.edges
-              .slice(0, 12)
-              .map(edge => {
-                const node = edge.node;
-                return {
-                  id: node.shortcode,
-                  url: `https://www.instagram.com/p/${node.shortcode}/`,
-                  title: '',
-                  description: node.edge_media_to_caption?.edges[0]?.node?.text || '',
-                  publishedAt: new Date(node.taken_at_timestamp * 1000),
-                  thumbnail: node.thumbnail_src || node.display_url,
-                  isPinned: node.pinned_for_users && node.pinned_for_users.length > 0
-                };
-              })
-              .sort((a, b) => b.publishedAt - a.publishedAt);
+            if (userData?.edge_owner_to_timeline_media?.edges) {
+              const posts = userData.edge_owner_to_timeline_media.edges
+                .slice(0, 12)
+                .map(edge => {
+                  const node = edge.node;
+                  return {
+                    id: node.shortcode,
+                    url: `https://www.instagram.com/p/${node.shortcode}/`,
+                    title: '',
+                    description: node.edge_media_to_caption?.edges[0]?.node?.text || '',
+                    publishedAt: new Date(node.taken_at_timestamp * 1000),
+                    thumbnail: node.thumbnail_src || node.display_url,
+                    isPinned: node.pinned_for_users && node.pinned_for_users.length > 0
+                  };
+                })
+                .sort((a, b) => b.publishedAt - a.publishedAt);
 
-            const pinnedCount = posts.filter(p => p.isPinned).length;
-            if (pinnedCount > 0) {
-              logger.debug(`Found ${pinnedCount} pinned post(s) for @${username}`, {
+              logger.info(`Successfully scraped ${posts.length} posts via _sharedData`, {
                 username,
-                pinnedCount
+                postCount: posts.length
               });
+              return posts;
             }
+          } catch (e) {
+            logger.debug('Failed to parse _sharedData, trying alternative method', { username });
+          }
+        }
 
-            logger.info(`Successfully scraped ${posts.length} posts from web page`, {
+        // Method 2: Try to extract from script tags with type="application/ld+json"
+        const jsonLdMatches = html.matchAll(/<script type="application\/ld\+json">(.+?)<\/script>/gs);
+        for (const match of jsonLdMatches) {
+          try {
+            const data = JSON.parse(match[1]);
+            if (data['@type'] === 'ProfilePage' && data.mainEntity) {
+              // This might contain basic profile info but not posts
+              logger.debug('Found JSON-LD data but no post information', { username });
+            }
+          } catch (e) {
+            // Skip invalid JSON
+          }
+        }
+
+        // Method 3: Try extracting shortcodes from HTML (last resort)
+        const shortcodeMatches = html.matchAll(/\/p\/([A-Za-z0-9_-]+)\//g);
+        if (shortcodeMatches) {
+          const shortcodes = new Set();
+          for (const match of shortcodeMatches) {
+            shortcodes.add(match[1]);
+            if (shortcodes.size >= 12) break;
+          }
+
+          if (shortcodes.size > 0) {
+            const posts = Array.from(shortcodes).map(shortcode => ({
+              id: shortcode,
+              url: `https://www.instagram.com/p/${shortcode}/`,
+              title: '',
+              description: '',
+              publishedAt: new Date(), // No timestamp available
+              thumbnail: null
+            }));
+
+            logger.info(`Scraped ${posts.length} post URLs (limited metadata)`, {
               username,
               postCount: posts.length
             });
@@ -323,16 +360,16 @@ class InstagramService {
     metrics.recordFetchAttempt(username);
 
     // Strategy order (best to worst for real-time data):
-    // 1. Direct API (fastest, real-time, but rate limited)
-    // 2. Web scrape (reliable, real-time, harder to block)
-    // 3. RSS Bridge (slow, cached 15-60min, but stable)
+    // 1. Web scrape (most reliable, real-time, works well)
+    // 2. Direct API (fastest but often blocked by Instagram with 401)
+    // 3. RSS Bridge (slow, cached 15-60min, but stable backup)
 
     // Try last successful method first if we have one
     const lastMethod = this.lastSuccessfulMethod.get(username);
 
     let strategies = [
-      { name: 'Direct API', fn: () => this.fetchPostsViaDirect(username) },
       { name: 'Web Scrape', fn: () => this.fetchPostsViaWebScrape(username) },
+      { name: 'Direct API', fn: () => this.fetchPostsViaDirect(username) },
       { name: 'RSS Bridge', fn: () => this.fetchPostsViaRSSBridge(username) }
     ];
 
@@ -367,7 +404,6 @@ class InstagramService {
 
           allPosts.push(...posts);
           successfulMethods.push(strategy.name);
-          metrics.recordFetchMethodSuccess(strategy.name, 1);
 
           // Update last successful method
           this.lastSuccessfulMethod.set(username, strategy.name);
