@@ -102,10 +102,6 @@ class InstagramService {
           })
           .sort((a, b) => b.publishedAt - a.publishedAt);
 
-        logger.info(`Found ${posts.length} posts for @${username} via RSS Bridge`, {
-          username,
-          postCount: posts.length
-        });
         return posts;
       },
       FETCH_RETRY_ATTEMPTS,
@@ -116,10 +112,7 @@ class InstagramService {
         return !error.response || error.response.status >= 500;
       }
     ).catch(error => {
-      logger.error(`RSS Bridge error for @${username}`, {
-        username,
-        error: sanitizeError(error)
-      });
+      logger.warn(`RSS Bridge unavailable for @${username}: ${error.message}`, { username });
       return [];
     });
   }
@@ -351,7 +344,7 @@ class InstagramService {
   }
 
   /**
-   * Main method: Try multiple strategies to fetch posts (ordered by reliability and speed)
+   * Main method: Fetch posts using RSS Bridge (most reliable method)
    * @param {string} username - Instagram username
    * @returns {Promise<Array>} Array of post objects
    */
@@ -359,95 +352,37 @@ class InstagramService {
     const startTime = Date.now();
     metrics.recordFetchAttempt(username);
 
-    // Strategy order (best to worst for real-time data):
-    // 1. Web scrape (most reliable, real-time, works well)
-    // 2. Direct API (fastest but often blocked by Instagram with 401)
-    // 3. RSS Bridge (slow, cached 15-60min, but stable backup)
+    logger.debug(`Fetching posts for @${username}`, { username });
 
-    // Try last successful method first if we have one
-    const lastMethod = this.lastSuccessfulMethod.get(username);
+    try {
+      const posts = await this.fetchPostsViaRSSBridge(username);
 
-    let strategies = [
-      { name: 'Web Scrape', fn: () => this.fetchPostsViaWebScrape(username) },
-      { name: 'Direct API', fn: () => this.fetchPostsViaDirect(username) },
-      { name: 'RSS Bridge', fn: () => this.fetchPostsViaRSSBridge(username) }
-    ];
-
-    // Reorder to try last successful method first
-    if (lastMethod) {
-      const lastMethodStrategy = strategies.find(s => s.name === lastMethod);
-      if (lastMethodStrategy) {
-        strategies = [
-          lastMethodStrategy,
-          ...strategies.filter(s => s.name !== lastMethod)
-        ];
-        logger.debug(`Trying last successful method first: ${lastMethod}`, {
-          username,
-          lastMethod
-        });
+      if (posts.length === 0) {
+        logger.warn(`No posts found for @${username}`, { username });
+        metrics.recordFetchFailure(username);
+        return [];
       }
-    }
 
-    // Try multiple methods and combine results for better reliability
-    const allPosts = [];
-    const successfulMethods = [];
+      const duration = Date.now() - startTime;
+      metrics.recordFetchSuccess(username, 'RSS Bridge', duration);
 
-    for (const strategy of strategies) {
-      try {
-        const posts = await strategy.fn();
-        if (posts.length > 0) {
-          logger.info(`✓ ${strategy.name} returned ${posts.length} posts for @${username}`, {
-            username,
-            method: strategy.name,
-            postCount: posts.length
-          });
+      logger.info(`Found ${posts.length} posts for @${username}`, {
+        username,
+        postCount: posts.length,
+        latestPost: posts[0].id
+      });
 
-          allPosts.push(...posts);
-          successfulMethods.push(strategy.name);
-
-          // Update last successful method
-          this.lastSuccessfulMethod.set(username, strategy.name);
-        }
-
-        // Add small delay between attempts
-        await delay(STRATEGY_DELAY_MS);
-      } catch (error) {
-        logger.error(`✗ ${strategy.name} failed`, {
-          username,
-          method: strategy.name,
-          error: sanitizeError(error)
-        });
-      }
-    }
-
-    if (allPosts.length === 0) {
-      logger.warn(`✗ All methods failed for @${username}`, { username });
+      return posts;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      logger.error(`Failed to fetch posts for @${username}`, {
+        username,
+        error: error.message,
+        duration
+      });
       metrics.recordFetchFailure(username);
       return [];
     }
-
-    // Deduplicate posts by ID and sort by timestamp
-    const uniquePosts = Array.from(
-      new Map(allPosts.map(post => [post.id, post])).values()
-    ).sort((a, b) => b.publishedAt - a.publishedAt);
-
-    const duration = Date.now() - startTime;
-    metrics.recordFetchSuccess(username, successfulMethods[0], duration);
-
-    logger.info(`✓ Combined results: ${uniquePosts.length} unique posts from ${successfulMethods.join(', ')}`, {
-      username,
-      uniquePostCount: uniquePosts.length,
-      methods: successfulMethods,
-      duration
-    });
-
-    logger.debug(`Latest post: ${uniquePosts[0].id}`, {
-      username,
-      postId: uniquePosts[0].id,
-      publishedAt: uniquePosts[0].publishedAt.toISOString()
-    });
-
-    return uniquePosts;
   }
 
   /**
